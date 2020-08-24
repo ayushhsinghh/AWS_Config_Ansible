@@ -1,0 +1,4 @@
+region: ap-south-1
+TypeInstance: t2-micro
+version: v1
+cidr_block: 10.10.0.0/16

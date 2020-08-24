@@ -1,0 +1,127 @@
+- hosts: localhost
+  vars_files: 
+    - vars.yml
+    - secure.yml
+  tasks:
+    - name: Creating a VPC 
+      ec2_vpc_net:
+       aws_access_key: "{{ aws_access_key }}"
+       aws_secret_key: "{{ aws_secret_key }}"
+       name: MyVPC_Ansible
+       cidr_block: 10.10.0.0/16
+       region: "{{ region }}"
+       tags:
+         module: ec2_vpc_net
+         this: works
+       tenancy: default
+      register: vpc
+
+
+
+
+    - name: Creating Public Subnet
+      ec2_vpc_subnet:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        state: present
+        az: ap-south-1a
+        region: "{{ region }}"
+        vpc_id: "{{ vpc.vpc.id }}"
+        cidr: 10.10.1.0/24
+        map_public: yes
+        tags:
+          Name: Public-subnet_ansible
+      register: Psubnet
+
+
+    - name: Creating Interget Gateway  
+      ec2_vpc_igw:
+       vpc_id: "{{ vpc.vpc.id }}"
+       aws_access_key: "{{ aws_access_key }}"
+       aws_secret_key: "{{ aws_secret_key }}"
+       state: present
+       region: "{{ region }}"
+      register: igw
+
+
+
+    - name: Set up public subnet route table
+      ec2_vpc_route_table:
+         aws_access_key: "{{ aws_access_key }}"
+         aws_secret_key: "{{ aws_secret_key }}"
+         vpc_id: "{{ vpc.vpc.id }}"
+         region: "{{ region }}"
+         tags:
+          Name: MyRouteTable_ansible
+         subnets:
+          - "{{ Psubnet.subnet.id }}"
+         routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw.gateway_id }}"
+      register: Proute_table
+
+
+
+    - name: Create Security Group
+      ec2_group:
+       name: MySecurityGroup_ansible
+       description: Security_Group_for_SSH_and_HTTP
+       vpc_id: "{{ vpc.vpc.id }}"
+       region: "{{ region }}"
+       aws_access_key: "{{ aws_access_key }}"
+       aws_secret_key: "{{ aws_secret_key }}"
+       rules:
+        - proto: tcp
+          ports:
+          - 80
+          cidr_ip: 0.0.0.0/0
+        - proto: tcp
+          ports:
+          - 22
+          cidr_ip: 0.0.0.0/0
+      register: security_group 
+
+
+
+    - name: create a new ec2 key pair
+      ec2_key:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        name: MyKey_ansible
+        region: "{{ region }}"
+      register: keypair
+    - name: Copy the KeyPair in Your Local System
+      copy: 
+        content: "{{ keypair.key.private_key }}"
+        dest:  "keys/key.ppk"
+        mode: "0600" 
+      when: keypair.changed == true
+
+      
+    - name: Create EC2 server
+      ec2:
+       image: ami-052c08d70def0ac62
+       wait: yes
+       instance_type: t2.micro
+       region: "{{ region }}"
+       group_id: "{{ security_group.group_id }}"
+       vpc_subnet_id: "{{ Psubnet.subnet.id }}"
+       key_name: "{{ keypair.key.name  }}"
+       count_tag:
+         Name: ApacheServer_Ansible
+       exact_count: 1
+       aws_access_key: "{{ aws_access_key }}"
+       aws_secret_key: "{{ aws_secret_key }}"
+       assign_public_ip: yes
+       user_data: | 
+           #!/bin/bash
+           sudo yum install httpd -y
+           sudo systemctl start httpd
+           sudo systemctl enable httpd              
+           echo "Welcome to My Website by Ayush Singh" >> /var/www/html/index.html
+
+      register: instance     
+    - debug:
+         var: instance
+
+
